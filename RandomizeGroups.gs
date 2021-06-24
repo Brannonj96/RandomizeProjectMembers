@@ -61,7 +61,10 @@ function randomizeGroups() {
   var membersAndPref = []
   for (var i = 1; i<data.length; i++) {
      var row = data[i]
-
+     if (row[0] == "") {
+       ui.alert(`The name cannot be blank. Correct row ${i+1}`)
+       return
+     }
      //Push the member's name and a null initalized array of length equal to the number of projects
      membersAndPref.push([row[0], Array(projects.length)])
 
