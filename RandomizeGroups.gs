@@ -2,6 +2,14 @@
 // ProjectList sheet for correctly formatted values and if present, reads them and randomly
 // assigns members into the project based on their preferences
 
+class Member {
+  constructor(name, preferences) {
+    this.name = name
+    this.preferences = preferences
+  }
+}
+
+
 function randomizeGroups() {
   // Load the ui for use in giving error alerts
   var ui = SpreadsheetApp.getUi()
@@ -11,8 +19,14 @@ function randomizeGroups() {
 
   // Check the max group size cell for any errors
   var maxGroupSize = spreadsheet.getSheets()[0].getRange(8,2).getValue()
-  if (!Number.isInteger(maxGroupSize) || maxGroupSize<0) {
+  if (!Number.isInteger(maxGroupSize) || maxGroupSize<=0) {
     ui.alert("Max group size must be set to a whole number greater than 1. Please set it in cell B8")
+    return
+  }
+
+  var minGroupSize = spreadsheet.getSheets()[0].getRange(9,2).getValue()
+  if (!Number.isInteger(minGroupSize) || minGroupSize<0 || minGroupSize>maxGroupSize) {
+    ui.alert("Min group size must be set to a whole number ranging from 0 to the Maximum Group Size from cell B8. Please set it in cell B9")
     return
   }
 
@@ -31,7 +45,6 @@ function randomizeGroups() {
     return
   }
 
-
   // Load the first row, which should be project names. Slice to after the first element, which should be the "Name" column tab instead of a project name
   var rawProjects = data[0].slice(1)
 
@@ -39,6 +52,11 @@ function randomizeGroups() {
   var projects = rawProjects.filter(function (value) {
     return value != ""
   })
+
+  if (minGroupSize * projects.length > data.length-1) {
+    ui.alert("The minimum group size is impossible to achieve. Please decrease it in cell B9 or add more members to the ProjectList sheet")
+    return
+  }
 
   // Creates a map in the form {ProjectName: MemberArray} e.g. {Project1: [member1, member2, member3], Project2: [member4,member5]}
   // Returns an error on duplicate project names.
@@ -53,21 +71,20 @@ function randomizeGroups() {
   }
 
   // Begin iterating over the rows of students and their preferences
-  // In the end, the array will be a 3d array in the form [[Member1, ProjectPreferenceArray]] e.g.
-  // [[Member1, [LeastDesiredProject, 2ndLeastDesiredProject, MostDesiredProject]],
-  //  [Member2, [2ndLeastDesiredProject, LeastDesiredProject, MostDesiredProject]]]
+  // Create a list of the Member class. Member will have a name and a preference list
   //
-  // Note the preference occurs in ascending order so that they may be popped by preference priority in the correct order.
-  var membersAndPref = []
+  // Note the preference list is represented in ascending order so that they may be popped by preference priority in the correct order.
+
+  var members = []
   for (var i = 1; i<data.length; i++) {
      var row = data[i]
      if (row[0] == "") {
        ui.alert(`The name cannot be blank. Correct row ${i+1}`)
        return
      }
-     //Push the member's name and a null initalized array of length equal to the number of projects
-     membersAndPref.push([row[0], Array(projects.length)])
 
+     var memberName = row[0]
+     var orderedPreferences = new Array(projects.length)
      // Get all the preference values which should form a complete range 1 .. N though not necessarily in order.
      // If the length of preferences is not the same as the project length it errors. Removed empty slots from the project array to check this here.
      var preferences = row.slice(1)
@@ -99,8 +116,9 @@ function randomizeGroups() {
        // [project2, project1, project3] because projects and preferences are read left to right, and then the preference itself
        // is used to determine the index to place them (in ascending order). Project2 is first as least desirable, then project3, then project 1 as most desirable.
        var projectPreference = preferences.length - memberProjectPreference
-       membersAndPref[i-1][1][projectPreference] = projects[j]
+       orderedPreferences[projectPreference] = projects[j]
      }
+     members.push(new Member(memberName, orderedPreferences))
   }
 
   // A random member is chosen each iteration and then slotted based on their preference.
@@ -108,25 +126,37 @@ function randomizeGroups() {
   // 2nd preference and so on until the Nth preference. If they are not slotted because all groups are full, it errors.
   //
   // On each iteration, a new random member is chosen.
-  while (membersAndPref.length > 0){
+  for (var i = 0; i<members.length; i++) {
     
-    // Gives a random index in range 0 .. M where n is the remaining members to be slotted
-    var randomIndex = Math.floor(Math.random() * membersAndPref.length)
+    // Gives a random index in range 0 .. M where M is the remaining members to be slotted
+    var randomIndex = Math.floor(Math.random() * (members.length - i))
 
-    // Splice deletes up to n values from an array and returns the deleted values as an array. Since we delete only
-    // one value, we reference it as index 0 (the deleted member and their preference array)
-    var [randommember, memberPref] = membersAndPref.splice(randomIndex, 1)[0]
+    // This is an in-place random choice method; choose a random index 0..M where M is the remaining items to check
+    // once you get that index, store the value at the index, replace the index with the Mth value, and replace the Mth value
+    // with the stored value from the index
+    //
+    // Example:
+    // [Member1, Member2, Member3, Member4, Member5] Random Number [0,5) chooses 3 and selects Member4 for placement, then the array becomes
+    // [Member1, Member2, Member3, Member5, Member4] Random Number [0,4) chooses 1 and selects Member2 then the array becomes
+    // [Member1, Member5, Member3, Member2, Member4] Random Number [0,3) chooses 0 and selects Member1 then the array becomes
+    // [Member3, Member5, Member1, Member2, Member4] Random Number [0,2) chooses 1 and selects Member5 then the array becomes
+    // [Member3, Member5, Member1, Member2, Member4] note it has not changed because the last step choose the last index, 1, in the range 0..M. Random Number [0,1) chooses 0 and selects Member3
+    // [Member3, Member5, Member1, Member2, Member4] note it did not change because it selected the last index in the range 0..M. The resulting array is also a reverse of the order they were chose
+    var member = members[randomIndex]
+    members[randomIndex] = members[members.length - 1 - i]
+    members[members.length - 1 - i] = member
 
     // Iterate over the member's preferences and fit them into the first available project. They are placed into the previously created
     // projectsAndGroups map.
     // If all projects are full, it returns an error.
-    while (memberPref.length>0) {
+    while (member.preferences.length > 0) {
       var slotted = false
-      var preference = memberPref.pop()
-      if (projectsAndGroups.get(preference).length < maxGroupSize) { 
-        projectsAndGroups.get(preference).push(randommember)
-        slotted = true
-        break
+      var preference = member.preferences.pop()
+
+      if (projectsAndGroups.get(preference).length < maxGroupSize) {
+          projectsAndGroups.get(preference).push(member)
+          slotted = true
+          break
       }
     }
     
@@ -134,6 +164,59 @@ function randomizeGroups() {
       ui.alert(`Unable to fit all members into projects. Please adjust the maximum group size or the number of members`)
       return
     } 
+  }
+
+  // Check if any group is below minimum size
+  var belowMinimumSizeProjects = new Set()
+  for (let [project, group] of projectsAndGroups) {
+    if (group.length < minGroupSize) {
+      belowMinimumSizeProjects.add(project)
+    }
+  }
+
+  // If a group is below the minimum size, choose a random project that has more than the minimum
+  // then choose random members out of that project. If their next highest preference
+  // is a project below the minimum threshold, then remove them from their current project
+  // and add the member to their next preference, the one below the minimum threshold
+  // if the threshold is then met, remove it from the set containing the groups below minimum size
+  //
+  // If no member in the random project has a next preference that is below the threshold, then
+  // it selects another project (without repeating) until a member with that preference is found
+  //
+  // If after every project has been iterated, it loops through the project again to check the next preference
+  // of every member until all groups have at least the minimum size
+  while (belowMinimumSizeProjects.size > 0) {
+    for (var i = 0; i<projects.length; i++) {
+
+      // See the above loop that initally places members for an explanation on this random-choice method
+      var randomIndex = Math.floor(Math.random() * (projects.length - i))
+      var nextProject = projects[randomIndex]
+      projects[randomIndex] = projects[projects.length - 1 - i]
+      projects[projects.length - 1 - i] = nextProject
+
+      if (belowMinimumSizeProjects.has(nextProject)) {
+        continue
+      }
+      var groupMembers = projectsAndGroups.get(nextProject)
+      for (var j = 0; j < groupMembers.length; j++) {
+
+        // See the above loop that initally places members for an explanation on this random-choice method
+        var randomMemberIndex = Math.floor(Math.random() * (groupMembers.length - j))
+        var nextMember = groupMembers[randomMemberIndex]
+        groupMembers[randomMemberIndex] = groupMembers[groupMembers.length -1 - j]
+        groupMembers[groupMembers.length - 1 - j] = nextMember
+
+        var memberNextPreference = nextMember.preferences.pop()
+        if (belowMinimumSizeProjects.has(memberNextPreference)) {
+          projectsAndGroups.get(memberNextPreference).push(nextMember)
+          groupMembers.splice(groupMembers.length - 1 - j, 1)
+
+          if (projectsAndGroups.get(memberNextPreference).length == minGroupSize) {
+            belowMinimumSizeProjects.delete(memberNextPreference)
+          }
+        }
+      }
+    }
   }
   
   // Attempt to get the spreadsheet called results
@@ -161,7 +244,7 @@ function randomizeGroups() {
     var row = 1
     results.getRange(row++, col).setValue(project)
     for (var i = 0; i<members.length; i++) {
-      results.getRange(row++, col).setValue(members[i])
+      results.getRange(row++, col).setValue(members[i].name)
     }
 
     // Autoresize and add a completely arbitrary number of pixels that I think looks alright
