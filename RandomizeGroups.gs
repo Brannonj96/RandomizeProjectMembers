@@ -198,6 +198,12 @@ function randomizeGroups() {
         continue
       }
       var groupMembers = projectsAndGroups.get(nextProject)
+      
+      // We don't want to take members out of groups at the minimum group size
+      if (groupMembers.length == minGroupSize) {
+        continue
+      }
+      
       for (var j = 0; j < groupMembers.length; j++) {
 
         // See the above loop that initally places members for an explanation on this random-choice method
